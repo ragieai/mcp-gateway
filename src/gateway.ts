@@ -94,7 +94,6 @@ export class Gateway extends EventEmitter {
 
     this.app.post(
       "/:organizationId/mcp/:collection",
-      this.ensureMappingMiddleware.bind(this),
       this.authMiddleware.bind(this),
       createProxyMiddleware<ProxyRequest>({
         target: this.config.ragieBaseUrl,
@@ -131,19 +130,15 @@ export class Gateway extends EventEmitter {
     });
   }
 
-  ensureMappingMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
-    if (!this.mapper.hasMapping(req.params.organizationId, req.params.collection)) {
-      this.logger.warn(
-        `No mapping found for organization ${req.params.organizationId} and collection ${req.params.collection}`
-      );
-      res.status(404).json({ error: "Collection not found" });
-      return;
-    }
-    next();
-  }
-
   async authMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
     const { organizationId, collection } = req.params;
+
+    if (!this.mapper.hasMapping(organizationId, collection)) {
+      this.logger.warn(`No mapping found for organization ${organizationId} and collection ${collection}`);
+      res.status(404).json({ error: "Mapping not found" });
+      return;
+    }
+
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
     let userId: string | undefined;
 
