@@ -21,7 +21,7 @@ const gracefulShutdown = process.env["NODE_ENV"] === "development" ? false : tru
 async function main(): Promise<void> {
   let mapper: Mapper;
   try {
-    mapper = loadMapper(config);
+    mapper = loadMapper(config.mappingFile);
   } catch (e) {
     assert(e instanceof Error, "Expected error to be an instance of Error");
     logger.error("Could not load mapper: " + e.message);

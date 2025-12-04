@@ -18,6 +18,13 @@ import type { Mapper } from "./mapping.js";
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
 
+interface ProxyParams {
+  organizationId: string;
+  collection: string;
+}
+
+type ProxyRequest = Request<ProxyParams>;
+
 export class Gateway extends EventEmitter {
   private logger: winston.Logger;
   private config: Config;
@@ -86,20 +93,20 @@ export class Gateway extends EventEmitter {
     });
 
     this.app.post(
-      "/:organizationId/mcp",
+      "/:organizationId/mcp/:collection",
       this.ensureMappingMiddleware.bind(this),
       this.bearerTokenMiddleware.bind(this),
-      createProxyMiddleware<Request<{ organizationId: string }>>({
+      createProxyMiddleware<ProxyRequest>({
         target: this.config.ragieBaseUrl,
         logger: this.logger,
         changeOrigin: true,
         pathRewrite: (_path, req) => {
-          const partition = this.mapper.getPartition(req.params.organizationId);
+          const partition = this.mapper.getPartition(req.params.organizationId, req.params.collection);
           return `/mcp/${partition}/`;
         },
         on: {
           proxyReq: (proxyReq, req) => {
-            const apiKey = this.mapper.getApiKey(req.params.organizationId);
+            const apiKey = this.mapper.getApiKey(req.params.organizationId, req.params.collection);
             proxyReq.setHeader("Authorization", `Bearer ${apiKey}`);
           },
         },
@@ -124,19 +131,19 @@ export class Gateway extends EventEmitter {
     });
   }
 
-  ensureMappingMiddleware(req: Request<{ organizationId: string }>, res: Response, next: NextFunction) {
-    if (!this.mapper.hasMapping(req.params.organizationId)) {
-      this.logger.warn(`No mapping found for organization ${req.params.organizationId}`);
-      res.status(404).json({ error: "Organization not found" });
+  ensureMappingMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
+    if (!this.mapper.hasMapping(req.params.organizationId, req.params.collection)) {
+      this.logger.warn(
+        `No mapping found for organization ${req.params.organizationId} and collection ${req.params.collection}`
+      );
+      res.status(404).json({ error: "Collection not found" });
       return;
     }
     next();
   }
 
-  async bearerTokenMiddleware(req: Request<{ organizationId: string }>, res: Response, next: NextFunction) {
+  async bearerTokenMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
     const organizationId = req.params.organizationId;
-    assert(organizationId, "Organization ID is required.");
-
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
     let userId: string | undefined;
 

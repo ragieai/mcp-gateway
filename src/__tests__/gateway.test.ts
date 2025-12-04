@@ -3,7 +3,7 @@
  */
 
 import { Gateway } from "../gateway.js";
-import { DefaultMapper, MapperConfig } from "../mapping.js";
+import { StrictMapper, MapperConfig } from "../mapping.js";
 
 describe("Gateway", () => {
   let gateway: Gateway;
@@ -24,10 +24,9 @@ describe("Gateway", () => {
         workosApiKey: "workos_api_key",
         workosAuthorizationServerUrl: "https://placeholder.authkit.app",
         workosClientId: "workos_client_id",
-        strictMapping: false,
-        mappingFile: undefined,
+        mappingFile: "mapping.json",
       },
-      new DefaultMapper(mapperConfig, {})
+      new StrictMapper({})
     );
   });
 
