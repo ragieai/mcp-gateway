@@ -7,6 +7,7 @@ export interface Mapper {
   hasMapping(organizationId: string, collection: string): boolean;
   getPartition(organizationId: string, collection: string): string;
   getApiKey(organizationId: string, collection: string): string;
+  getAllowedRoles(organizationId: string, collection: string): string[] | "*";
 }
 /* eslint-enable no-unused-vars */
 
@@ -66,6 +67,10 @@ export class StrictMapper implements Mapper {
 
   getApiKey(organizationId: string, collection: string): string {
     return this._getMappingOrThrow(organizationId, collection).apiKey;
+  }
+
+  getAllowedRoles(organizationId: string, collection: string): string[] | "*" {
+    return this._getMappingOrThrow(organizationId, collection).allowedRoles;
   }
 
   static load(mappingFile: string): StrictMapper {

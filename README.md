@@ -182,7 +182,7 @@ Each collection mapping must include:
 - `apiKey` (required): The Ragie API key for this organization/collection combination
 - `allowedRoles` (required): Array of role names (e.g., `["admin", "member"]`) or `"*"` to allow all roles
 
-**Note:** The `allowedRoles` field is part of the mapping structure but role validation is not currently enforced by the gateway. The gateway only validates organization membership.
+**Role-Based Access Control:** The gateway enforces role-based access control using WorkOS organization membership roles. Users must have at least one role that matches the `allowedRoles` configuration for the collection they're trying to access. Use `"*"` to allow access for any role.
 
 Set the `MAPPING_FILE` environment variable (required). The path can be absolute or relative to the current working directory:
 
@@ -266,16 +266,18 @@ Each organization/collection combination in the mapping file must specify its ow
 2. **Bearer Token**: Clients include the token in the `Authorization: Bearer <token>` header
 3. **Token Verification**: The gateway verifies the JWT signature using WorkOS JWKS
 4. **Membership Validation**: The gateway verifies the user is an active member of the requested organization
-5. **Mapping Validation**: The gateway checks that the organization/collection combination exists in the mapping file
-6. **Request Proxying**: Authenticated requests are proxied to the Ragie MCP server with the appropriate API key from the mapping file
+5. **Role Validation**: The gateway validates that the user has at least one role matching the collection's `allowedRoles`
+6. **Mapping Validation**: The gateway checks that the organization/collection combination exists in the mapping file
+7. **Request Proxying**: Authenticated requests are proxied to the Ragie MCP server with the appropriate API key from the mapping file
 
 ## Security Features
 
 - **JWT Verification**: All bearer tokens are cryptographically verified using WorkOS JWKS
 - **Organization Membership**: Users must be active members of the organization they're accessing
+- **Role-Based Access Control**: Users must have at least one role matching the collection's `allowedRoles` configuration
 - **Mapping Validation**: Only organization/collection combinations defined in the mapping file are accessible
 - **API Key Injection**: Ragie API key is automatically injected in proxied requests from the mapping file
-- **Error Handling**: Proper HTTP status codes and WWW-Authenticate headers for auth failures
+- **Error Handling**: Proper HTTP status codes (401, 403, 404) and WWW-Authenticate headers for auth failures
 - **Collection Isolation**: Each organization/collection combination uses its own API key and partition
 
 ## Development

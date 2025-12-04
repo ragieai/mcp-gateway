@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import express, { NextFunction, Request, Response } from "express";
 
-import { WorkOS } from "@workos-inc/node";
+import { OrganizationMembership, WorkOS } from "@workos-inc/node";
 import assert from "assert";
 import expressWinston from "express-winston";
 import { readFileSync } from "fs";
@@ -95,7 +95,7 @@ export class Gateway extends EventEmitter {
     this.app.post(
       "/:organizationId/mcp/:collection",
       this.ensureMappingMiddleware.bind(this),
-      this.bearerTokenMiddleware.bind(this),
+      this.authMiddleware.bind(this),
       createProxyMiddleware<ProxyRequest>({
         target: this.config.ragieBaseUrl,
         logger: this.logger,
@@ -142,8 +142,8 @@ export class Gateway extends EventEmitter {
     next();
   }
 
-  async bearerTokenMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
-    const organizationId = req.params.organizationId;
+  async authMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
+    const { organizationId, collection } = req.params;
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
     let userId: string | undefined;
 
@@ -171,9 +171,9 @@ export class Gateway extends EventEmitter {
       statuses: ["active"],
     });
 
-    if (response.data.length === 0) {
-      this.logger.warn(`User ${userId} is not a member of the organization ${organizationId}`);
-      res.set("WWW-Authenticate", this.wwwAuthenticateHeader).status(401).json({ error: "Invalid bearer token." });
+    const hasAccess = _checkAccess(userId, response.data, this.mapper.getAllowedRoles(organizationId, collection));
+    if (!hasAccess) {
+      res.set("WWW-Authenticate", this.wwwAuthenticateHeader).status(403).json({ error: "Access denied" });
       return;
     }
 
@@ -246,4 +246,23 @@ export class Gateway extends EventEmitter {
   isActive(): boolean {
     return this.isRunning;
   }
+}
+
+function _checkAccess(userId: string, memberships: OrganizationMembership[], allowedRoles: string[] | "*"): boolean {
+  if (memberships.length === 0) {
+    return false;
+  }
+
+  if (allowedRoles === "*") {
+    return true;
+  }
+
+  const roles = new Set<string>(
+    memberships
+      .filter(membership => membership.userId === userId)
+      .flatMap(membership => membership.roles ?? [])
+      .map(role => role.slug)
+  );
+
+  return allowedRoles.some(role => roles.has(role));
 }
