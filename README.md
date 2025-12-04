@@ -9,26 +9,16 @@ This gateway acts as a secure proxy between AI clients (like Claude, OpenAI, or 
 - **Bearer Token Authentication**: JWT token verification via WorkOS JWKS
 - **Organization-Based Routing**: Multi-tenant routing with organization-scoped endpoints
 - **Organization Membership Validation**: Verifies user membership in organizations via WorkOS
-- **Optional Partition Mapping**: Maps organization IDs to Ragie partitions for flexible routing with optional per-organization API keys
+- **Collection-Based Mapping**: Maps organization IDs and collections to Ragie partitions with per-organization/collection API keys
 - **Proxy Functionality**: Transparent forwarding of authenticated requests to Ragie MCP services
 - **OAuth Discovery Endpoints**: Well-known endpoints for OAuth metadata discovery
-
-## Features
-
-- 🔐 **Bearer Token Authentication**: JWT token verification using WorkOS JWKS
-- 🏢 **Multi-Tenant Architecture**: Organization-based routing and access control
-- ✅ **Membership Validation**: Automatic verification of user membership in organizations
-- 🗺️ **Flexible Routing**: Optional organization-to-partition mapping with per-organization API key support
-- 🔄 **Request Proxying**: Seamless forwarding to Ragie MCP services
-- 📋 **OAuth Discovery**: Well-known endpoints for OAuth metadata
-- 🚀 **Production Ready**: Graceful shutdown, error handling, and structured logging
-- 🧪 **Test Coverage**: Comprehensive test suite with Jest
 
 ## Prerequisites
 
 - Node.js 18+
 - WorkOS account and application setup
-- Ragie API key and MCP server access
+- Ragie API keys for your organizations/collections
+- Mapping file configured with organization/collection to partition mappings
 
 ## Installation
 
@@ -91,7 +81,7 @@ cd mcp-gateway
 npm install
 
 # Copy the environment template
-cp env.example .env
+cp .env.example .env
 
 # Configure your environment variables in .env (see Configuration section)
 
@@ -109,7 +99,7 @@ The gateway requires several environment variables to be configured. You can set
 
 ### Required Variables
 
-- `RAGIE_API_KEY`: Your Ragie API key for accessing MCP services
+- `MAPPING_FILE`: Path to a JSON file mapping organization IDs and collections to Ragie partitions (required)
 - `WORKOS_API_KEY`: Your WorkOS API key
 - `WORKOS_AUTHORIZATION_SERVER_URL`: Your WorkOS AuthKit authorization server URL
 - `WORKOS_CLIENT_ID`: Your WorkOS application client ID
@@ -122,14 +112,14 @@ The gateway requires several environment variables to be configured. You can set
 - `LOG_FORMAT`: Log format - json or pretty (defaults to pretty)
 - `NODE_ENV`: Environment mode (development, production, etc.)
 - `RAGIE_BASE_URL`: Ragie API base URL (defaults to `https://api.ragie.ai/`)
-- `MAPPING_FILE`: Path to a JSON file mapping organization IDs to Ragie partitions (optional)
-- `STRICT_MAPPING`: Enable strict mapping mode - only organizations in the mapping file are allowed (defaults to false, requires `MAPPING_FILE`)
-- `STRICT_API_KEYS`: Enable strict API key handling - requires all mappings to have an `apiKey` field (defaults to false, see Per-Organization API Keys section for details)
 
 ### Example `.env` File
 
 ```bash
-RAGIE_API_KEY=your_ragie_api_key_here
+# Required: Path to mapping file
+MAPPING_FILE=mapping.json
+
+# Required: WorkOS Configuration
 WORKOS_API_KEY=your_workos_api_key_here
 WORKOS_AUTHORIZATION_SERVER_URL=https://api.workos.com/auth/v1
 WORKOS_CLIENT_ID=your_workos_client_id_here
@@ -143,10 +133,6 @@ LOG_FORMAT=pretty
 NODE_ENV=production
 # Optional: Ragie API base URL (defaults to https://api.ragie.ai/)
 # RAGIE_BASE_URL=https://api.ragie.ai/
-# Optional: Organization mapping
-# MAPPING_FILE=mapping.json
-# STRICT_MAPPING=false
-# STRICT_API_KEYS=false
 ```
 
 ## Usage
@@ -161,27 +147,44 @@ npx @ragieai/mcp-gateway
 
 The gateway will start on port 3000 (or the port specified in `PORT` environment variable).
 
-### Organization Mapping
+### Organization and Collection Mapping
 
-The gateway supports optional organization-to-partition mapping for flexible routing. Create a JSON mapping file:
+The gateway uses a required mapping file that maps organization IDs and collections to Ragie partitions. Each organization can have multiple collections, and each collection mapping specifies the partition and API key to use.
+
+Create a JSON mapping file:
 
 ```json
 {
-  "org_A1A1A1A1A1A1A1A1A1A1A1A1A1": {
-    "partition": "soc2"
+  "org_11111111111111111111111111": {
+    "collection-name": {
+      "partition": "soc2",
+      "apiKey": "ragie_api_key_for_this_org_collection",
+      "allowedRoles": ["admin", "member"]
+    },
+    "another-collection": {
+      "partition": "custom-partition",
+      "apiKey": "different_api_key",
+      "allowedRoles": "*"
+    }
   },
-  "org_B2B2B2B2B2B2B2B2B2B2B2B2B2": {
-    "partition": "custom-partition",
-    "apiKey": "optional_ragie_api_key_for_this_org"
+  "org_22222222222222222222222222": {
+    "default": {
+      "partition": "production",
+      "apiKey": "production_api_key",
+      "allowedRoles": ["admin"]
+    }
   }
 }
 ```
 
-Each organization mapping can include:
+Each collection mapping must include:
 - `partition` (required): The Ragie partition name to route to
-- `apiKey` (optional): A custom Ragie API key for this organization. If not provided, the default `RAGIE_API_KEY` will be used.
+- `apiKey` (required): The Ragie API key for this organization/collection combination
+- `allowedRoles` (required): Array of role names (e.g., `["admin", "member"]`) or `"*"` to allow all roles
 
-Set the `MAPPING_FILE` environment variable to enable mapping. The path can be absolute or relative to the current working directory:
+**Note:** The `allowedRoles` field is part of the mapping structure but role validation is not currently enforced by the gateway. The gateway only validates organization membership.
+
+Set the `MAPPING_FILE` environment variable (required). The path can be absolute or relative to the current working directory:
 
 ```bash
 MAPPING_FILE=mapping.json npx @ragieai/mcp-gateway
@@ -193,35 +196,19 @@ Or in your `.env` file:
 MAPPING_FILE=mapping.json
 ```
 
-**Note:** The mapping file is loaded once at startup. If the file cannot be read or contains invalid JSON, the gateway will fail to start with an error. Changes to the mapping file require restarting the gateway to take effect.
+**Important:** The mapping file is loaded once at startup. If the file cannot be read or contains invalid JSON, the gateway will fail to start with an error. Changes to the mapping file require restarting the gateway to take effect.
 
-### Strict Mapping Mode
-
-When strict mapping is enabled, only organizations defined in the mapping file are allowed. Requests to unmapped organizations will return a 404 error. Set `STRICT_MAPPING=true`:
-
-```bash
-MAPPING_FILE=mapping.json STRICT_MAPPING=true npx @ragieai/mcp-gateway
-```
-
-Or in your `.env` file:
-
-```bash
-MAPPING_FILE=mapping.json
-STRICT_MAPPING=true
-```
+The gateway uses strict mapping by default - only organization/collection combinations defined in the mapping file are allowed. Requests to unmapped organizations or collections will return a 404 error.
 
 ### Example: Running with Environment Variables
 
 ```bash
 BASE_URL=https://gateway.example.com \
-RAGIE_API_KEY=your_key \
+MAPPING_FILE=mapping.json \
 WORKOS_API_KEY=your_workos_key \
 WORKOS_AUTHORIZATION_SERVER_URL=https://api.workos.com/auth/v1 \
 WORKOS_CLIENT_ID=your_client_id \
 LOG_FORMAT=json \
-MAPPING_FILE=mapping.json \
-STRICT_MAPPING=false \
-STRICT_API_KEYS=false \
 npx @ragieai/mcp-gateway
 ```
 
@@ -234,68 +221,44 @@ npx @ragieai/mcp-gateway
 
 ### Protected Endpoints
 
-- `POST /:organizationId/mcp` - Proxies requests to Ragie MCP server (requires bearer token)
+- `POST /:organizationId/mcp/:collection` - Proxies requests to Ragie MCP server (requires bearer token)
 
 ### Path Rewriting
 
-The gateway rewrites paths when proxying to the Ragie MCP server:
-- Without mapping: `POST /org_123/mcp` → `POST /mcp/org_123/` (organization ID is lowercased, trailing slash added)
-- With mapping: `POST /org_123/mcp` → `POST /mcp/soc2/` (if `org_123` maps to partition `soc2`, trailing slash added)
+The gateway rewrites paths when proxying to the Ragie MCP server based on the mapping file:
+- `POST /org_123/mcp/my-collection` → `POST /mcp/soc2/` (if `org_123`/`my-collection` maps to partition `soc2`, trailing slash added)
 
 The gateway constructs the target URL by combining `RAGIE_BASE_URL` with the rewritten path. For example, if `RAGIE_BASE_URL` is `https://api.ragie.ai/` and the path is rewritten to `/mcp/soc2/`, the final URL will be `https://api.ragie.ai/mcp/soc2/`.
 
-### Per-Organization API Keys
+### Per-Organization/Collection API Keys
 
-When using organization mapping, you can optionally specify a custom Ragie API key for each organization. This allows different organizations to use different Ragie API keys:
+Each organization/collection combination in the mapping file must specify its own API key. This allows different organizations and collections to use different Ragie API keys:
 
 ```json
 {
-  "org_A1A1A1A1A1A1A1A1A1A1A1A1A1": {
-    "partition": "soc2",
-    "apiKey": "ragie_api_key_for_org_1"
+  "org_11111111111111111111111111": {
+    "collection-name": {
+      "partition": "soc2",
+      "apiKey": "ragie_api_key_for_org_1_collection_1",
+      "allowedRoles": ["admin"]
+    },
+    "another-collection": {
+      "partition": "custom-partition",
+      "apiKey": "ragie_api_key_for_org_1_collection_2",
+      "allowedRoles": "*"
+    }
   },
-  "org_B2B2B2B2B2B2B2B2B2B2B2B2B2": {
-    "partition": "custom-partition"
+  "org_22222222222222222222222222": {
+    "default": {
+      "partition": "production",
+      "apiKey": "ragie_api_key_for_org_2",
+      "allowedRoles": ["admin"]
+    }
   }
 }
 ```
 
-**Default Behavior (`STRICT_API_KEYS=false`):**
-- Organizations with an `apiKey` in the mapping will use that key
-- Organizations without an `apiKey` in the mapping will fall back to the default `RAGIE_API_KEY` from environment variables
-- In the example above:
-  - `org_A1A1A1A1A1A1A1A1A1A1A1A1A1` will use its custom API key
-  - `org_B2B2B2B2B2B2B2B2B2B2B2B2B2` will use the default `RAGIE_API_KEY` from environment variables
-
-**Strict API Key Mode (`STRICT_API_KEYS=true`):**
-When strict API key mode is enabled, all organization mappings must include an `apiKey` field:
-
-- **With `STRICT_MAPPING=true`**: All mappings must have `apiKey`, and `RAGIE_API_KEY` is not used (can be omitted)
-- **With `STRICT_MAPPING=false`**: All mappings in the file must have `apiKey`, but `RAGIE_API_KEY` can still be set for fallback when an organization is not found in the mapping file
-
-If a mapping entry is missing an `apiKey` when `STRICT_API_KEYS=true`, the gateway will fail to start with a validation error.
-
-Example with strict API keys:
-
-```json
-{
-  "org_A1A1A1A1A1A1A1A1A1A1A1A1A1": {
-    "partition": "soc2",
-    "apiKey": "ragie_api_key_for_org_1"
-  },
-  "org_B2B2B2B2B2B2B2B2B2B2B2B2B2": {
-    "partition": "custom-partition",
-    "apiKey": "ragie_api_key_for_org_2"
-  }
-}
-```
-
-Enable strict API keys in your `.env` file:
-
-```bash
-MAPPING_FILE=mapping.json
-STRICT_API_KEYS=true
-```
+**Important:** All collection mappings must include an `apiKey` field. There is no default API key fallback - each organization/collection combination must have its own API key specified in the mapping file.
 
 ## Authentication Flow
 
@@ -303,15 +266,17 @@ STRICT_API_KEYS=true
 2. **Bearer Token**: Clients include the token in the `Authorization: Bearer <token>` header
 3. **Token Verification**: The gateway verifies the JWT signature using WorkOS JWKS
 4. **Membership Validation**: The gateway verifies the user is an active member of the requested organization
-5. **Request Proxying**: Authenticated requests are proxied to the Ragie MCP server with the Ragie API key
+5. **Mapping Validation**: The gateway checks that the organization/collection combination exists in the mapping file
+6. **Request Proxying**: Authenticated requests are proxied to the Ragie MCP server with the appropriate API key from the mapping file
 
 ## Security Features
 
 - **JWT Verification**: All bearer tokens are cryptographically verified using WorkOS JWKS
 - **Organization Membership**: Users must be active members of the organization they're accessing
-- **API Key Injection**: Ragie API key is automatically injected in proxied requests (default or per-organization)
+- **Mapping Validation**: Only organization/collection combinations defined in the mapping file are accessible
+- **API Key Injection**: Ragie API key is automatically injected in proxied requests from the mapping file
 - **Error Handling**: Proper HTTP status codes and WWW-Authenticate headers for auth failures
-- **Strict Mapping**: Optional strict mode restricts access to only mapped organizations
+- **Collection Isolation**: Each organization/collection combination uses its own API key and partition
 
 ## Development
 
@@ -342,9 +307,10 @@ This gateway is designed to work with AI clients that support bearer token authe
 
 1. Authenticate users with WorkOS to obtain JWT tokens
 2. Include bearer tokens in the `Authorization` header for all requests
-3. Specify the organization ID in the URL path: `POST /{organizationId}/mcp`
+3. Specify the organization ID and collection in the URL path: `POST /{organizationId}/mcp/{collection}`
 4. Handle 401 responses with WWW-Authenticate headers for authentication errors
-5. Discover OAuth endpoints via `/.well-known/oauth-protected-resource` if needed
+5. Handle 404 responses for unmapped organization/collection combinations
+6. Discover OAuth endpoints via `/.well-known/oauth-protected-resource` if needed
 
 ### Example Request
 
@@ -353,17 +319,18 @@ curl -X POST \
   -H "Authorization: Bearer <workos-jwt-token>" \
   -H "Content-Type: application/json" \
   -d '{"query": "example query"}' \
-  https://gateway.example.com/org_123/mcp
+  https://gateway.example.com/org_123/mcp/my-collection
 ```
 
 ## Multi-Tenant Architecture
 
-The gateway supports multi-tenant access through organization-based routing:
+The gateway supports multi-tenant access through organization and collection-based routing:
 
-- Each organization has its own endpoint path
+- Each organization can have multiple collections, each with its own endpoint path
 - Users must be members of the organization to access its endpoints
-- Optional mapping allows organizations to share Ragie partitions
-- Strict mapping mode restricts access to only mapped organizations
+- Each organization/collection combination maps to a specific Ragie partition
+- Each organization/collection combination uses its own API key
+- Only mapped organization/collection combinations are accessible (strict mapping by default)
 
 ## Deployment
 
@@ -395,10 +362,11 @@ Run the container with required environment variables:
 docker run -d \
   --name mcp-gateway \
   -p 3000:3000 \
-  -e RAGIE_API_KEY=your_ragie_api_key_here \
+  -e MAPPING_FILE=/app/mapping.json \
   -e WORKOS_API_KEY=your_workos_api_key_here \
   -e WORKOS_AUTHORIZATION_SERVER_URL=https://api.workos.com/auth/v1 \
   -e WORKOS_CLIENT_ID=your_workos_client_id_here \
+  -v $(pwd)/mapping.json:/app/mapping.json:ro \
   mcp-gateway
 ```
 
@@ -422,7 +390,7 @@ Include optional environment variables as needed:
 docker run -d \
   --name mcp-gateway \
   -p 3000:3000 \
-  -e RAGIE_API_KEY=your_ragie_api_key_here \
+  -e MAPPING_FILE=/app/mapping.json \
   -e WORKOS_API_KEY=your_workos_api_key_here \
   -e WORKOS_AUTHORIZATION_SERVER_URL=https://api.workos.com/auth/v1 \
   -e WORKOS_CLIENT_ID=your_workos_client_id_here \
@@ -430,9 +398,6 @@ docker run -d \
   -e PORT=3000 \
   -e LOG_LEVEL=info \
   -e LOG_FORMAT=json \
-  -e MAPPING_FILE=/app/mapping.json \
-  -e STRICT_MAPPING=false \
-  -e STRICT_API_KEYS=false \
   -v $(pwd)/mapping.json:/app/mapping.json:ro \
   mcp-gateway
 ```
@@ -451,7 +416,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - RAGIE_API_KEY=${RAGIE_API_KEY}
+      - MAPPING_FILE=${MAPPING_FILE:-/app/mapping.json}
       - WORKOS_API_KEY=${WORKOS_API_KEY}
       - WORKOS_AUTHORIZATION_SERVER_URL=${WORKOS_AUTHORIZATION_SERVER_URL}
       - WORKOS_CLIENT_ID=${WORKOS_CLIENT_ID}
@@ -459,9 +424,6 @@ services:
       - PORT=3000
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-pretty}
-      - MAPPING_FILE=${MAPPING_FILE:-}
-      - STRICT_MAPPING=${STRICT_MAPPING:-false}
-      - STRICT_API_KEYS=${STRICT_API_KEYS:-false}
     volumes:
       - ./mapping.json:/app/mapping.json:ro
     restart: unless-stopped
