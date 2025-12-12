@@ -1,94 +1,55 @@
-import { readFileSync } from "fs";
-import { resolve } from "path";
-import z from "zod";
+import { and, eq } from "drizzle-orm";
+import { collections, getDatabase } from "./db/index.js";
+import { decrypt } from "./crypto.js";
 
-/* eslint-disable no-unused-vars */
 export interface Mapper {
-  hasMapping(organizationId: string, collection: string): boolean;
-  getPartition(organizationId: string, collection: string): string;
-  getApiKey(organizationId: string, collection: string): string;
-  getAllowedRoles(organizationId: string, collection: string): string[] | "*";
+  hasCollection(organizationId: string, collection: string): Promise<boolean>;
+  getCollection(organizationId: string, collection: string): Promise<CollectionRecord>;
 }
-/* eslint-enable no-unused-vars */
-
-export interface MapperConfig {
-  ragieApiKey: string;
-  strictApiKeys: boolean;
-}
-
-const CollectionMappingSchema = z.object({
-  allowedRoles: z.union([z.array(z.string()), z.literal("*")]),
-  partition: z.string(),
-  apiKey: z.string(),
-});
-
-const CollectionRecordSchema = z.record(z.string(), CollectionMappingSchema);
-
-const MappingSchema = z.record(z.string(), CollectionRecordSchema);
-
-function readJsonFile<T>(filePath: string): T {
-  try {
-    const resolvedPath = resolve(filePath);
-    const fileContents = readFileSync(resolvedPath, "utf-8");
-    return JSON.parse(fileContents);
-  } catch (error) {
-    throw new Error(`Failed to read JSON file: ${String(error)}`);
-  }
+export class CollectionRecord {
+  constructor(
+    public partition: string,
+    public ragieApiKey: string,
+    public allowedRoles: string[] | "*"
+  ) {}
 }
 
-export class StrictMapper implements Mapper {
-  private mapping: z.infer<typeof MappingSchema>;
+export class DatabaseMapper implements Mapper {
+  private db: ReturnType<typeof getDatabase>;
+  private encryptionKey: string;
 
-  constructor(mapping: z.infer<typeof MappingSchema>) {
-    this.mapping = mapping;
+  constructor(db: ReturnType<typeof getDatabase>, encryptionKey: string) {
+    this.db = db;
+    this.encryptionKey = encryptionKey;
   }
 
-  _getMappingOrThrow(organizationId: string, collection: string): z.infer<typeof CollectionMappingSchema> {
-    const entry = this.mapping[organizationId];
+  async getCollection(organizationId: string, collection: string): Promise<CollectionRecord> {
+    const result = await this.db
+      .select({
+        partition: collections.partition,
+        ragieApiKey: collections.ragieApiKey,
+        allowedRoles: collections.allowedRoles,
+      })
+      .from(collections)
+      .where(and(eq(collections.organizationId, organizationId), eq(collections.name, collection)))
+      .limit(1);
 
-    if (!entry) {
-      throw new Error(`Organization ${organizationId} not found in mapping`);
+    const record = result[0];
+    if (!record) {
+      throw new Error(`Collection ${collection} not found for organization ${organizationId}`);
     }
 
-    const mapping = entry[collection];
-    if (!mapping) {
-      throw new Error(`Collection ${collection} not found in mapping`);
-    }
-    return mapping;
+    const decryptedApiKey = await decrypt(record.ragieApiKey, this.encryptionKey);
+    return new CollectionRecord(record.partition, decryptedApiKey, record.allowedRoles);
   }
 
-  hasMapping(organizationId: string, collection: string): boolean {
-    return this.mapping[organizationId]?.[collection] !== undefined;
-  }
+  async hasCollection(organizationId: string, collection: string): Promise<boolean> {
+    const result = await this.db
+      .select({ id: collections.id })
+      .from(collections)
+      .where(and(eq(collections.organizationId, organizationId), eq(collections.name, collection)))
+      .limit(1);
 
-  getPartition(organizationId: string, collection: string): string {
-    return this._getMappingOrThrow(organizationId, collection).partition;
-  }
-
-  getApiKey(organizationId: string, collection: string): string {
-    return this._getMappingOrThrow(organizationId, collection).apiKey;
-  }
-
-  getAllowedRoles(organizationId: string, collection: string): string[] | "*" {
-    return this._getMappingOrThrow(organizationId, collection).allowedRoles;
-  }
-
-  static load(mappingFile: string): StrictMapper {
-    const json = readJsonFile(mappingFile);
-    const mapping = MappingSchema.parse(json);
-    return new StrictMapper(mapping);
-  }
-}
-
-export function loadMapper(mappingFile: string): Mapper {
-  try {
-    return StrictMapper.load(mappingFile);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      const errorMessages = error.issues.map(e => `${e.path.join(".")}: ${e.message}`).join(", ");
-      throw new Error(`Mapping file validation failed: ${errorMessages}`);
-    } else {
-      throw error;
-    }
+    return result.length > 0;
   }
 }

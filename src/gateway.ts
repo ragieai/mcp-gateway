@@ -24,7 +24,12 @@ interface ProxyParams {
 }
 
 type ProxyRequest = Request<ProxyParams>;
-
+interface AuthenticatedProxyRequest extends ProxyRequest {
+  collection?: {
+    partition: string;
+    ragieApiKey: string;
+  };
+}
 export class Gateway extends EventEmitter {
   private logger: winston.Logger;
   private config: Config;
@@ -95,18 +100,18 @@ export class Gateway extends EventEmitter {
     this.app.post(
       "/:organizationId/mcp/:collection",
       this.authMiddleware.bind(this),
-      createProxyMiddleware<ProxyRequest>({
+      createProxyMiddleware<AuthenticatedProxyRequest, Response, NextFunction>({
         target: this.config.ragieBaseUrl,
         logger: this.logger,
         changeOrigin: true,
-        pathRewrite: (_path, req) => {
-          const partition = this.mapper.getPartition(req.params.organizationId, req.params.collection);
-          return `/mcp/${partition}/`;
+        pathRewrite: async (_path, req) => {
+          assert(req.collection, "Collection is required");
+          return `/mcp/${req.collection.partition}/`;
         },
         on: {
-          proxyReq: (proxyReq, req) => {
-            const apiKey = this.mapper.getApiKey(req.params.organizationId, req.params.collection);
-            proxyReq.setHeader("Authorization", `Bearer ${apiKey}`);
+          proxyReq: async (proxyReq, req) => {
+            assert(req.collection, "Collection is required");
+            proxyReq.setHeader("Authorization", `Bearer ${req.collection.ragieApiKey}`);
           },
         },
       })
@@ -133,9 +138,9 @@ export class Gateway extends EventEmitter {
   async authMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
     const { organizationId, collection } = req.params;
 
-    if (!this.mapper.hasMapping(organizationId, collection)) {
-      this.logger.warn(`No mapping found for organization ${organizationId} and collection ${collection}`);
-      res.status(404).json({ error: "Mapping not found" });
+    if (!(await this.mapper.hasCollection(organizationId, collection))) {
+      this.logger.warn(`No collection found for organization ${organizationId} and collection ${collection}`);
+      res.status(404).json({ error: "Collection not found" });
       return;
     }
 
@@ -166,11 +171,16 @@ export class Gateway extends EventEmitter {
       statuses: ["active"],
     });
 
-    const hasAccess = _checkAccess(userId, response.data, this.mapper.getAllowedRoles(organizationId, collection));
+    const record = await this.mapper.getCollection(organizationId, collection);
+
+    const allowedRoles = record.allowedRoles;
+    const hasAccess = _checkAccess(userId, response.data, allowedRoles);
     if (!hasAccess) {
       res.set("WWW-Authenticate", this.wwwAuthenticateHeader).status(403).json({ error: "Access denied" });
       return;
     }
+
+    (req as AuthenticatedProxyRequest).collection = record;
 
     next();
   }
