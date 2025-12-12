@@ -170,11 +170,8 @@ export class Gateway extends EventEmitter {
       organizationId,
       statuses: ["active"],
     });
-
     const record = await this.mapper.getCollection(organizationId, collection);
-
-    const allowedRoles = record.allowedRoles;
-    const hasAccess = _checkAccess(userId, response.data, allowedRoles);
+    const hasAccess = _checkAccess(userId, response.data, record.allowedRoles);
     if (!hasAccess) {
       res.set("WWW-Authenticate", this.wwwAuthenticateHeader).status(403).json({ error: "Access denied" });
       return;
