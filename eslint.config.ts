@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import tsParser from "@typescript-eslint/parser";
+import tsPlugin from "@typescript-eslint/eslint-plugin";
 import prettier from "eslint-plugin-prettier";
 import prettierConfig from "eslint-config-prettier";
 import type { Linter } from "eslint";
@@ -23,10 +24,12 @@ const config: Linter.Config[] = [
     },
     plugins: {
       prettier,
+      "@typescript-eslint": tsPlugin,
     },
     rules: {
       "prettier/prettier": "error",
-      "no-unused-vars": "error",
+      "no-unused-vars": "off", // Turn off base rule
+      "@typescript-eslint/no-unused-vars": "error", // Use TypeScript-specific rule
       "no-console": "off",
       "prefer-const": "error",
       "no-var": "error",

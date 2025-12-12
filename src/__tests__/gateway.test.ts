@@ -3,19 +3,23 @@
  */
 
 import { Gateway } from "../gateway.js";
-import { StrictMapper, MapperConfig } from "../mapping.js";
+import { Mapper, CollectionRecord } from "../mapping.js";
+
+class MockMapper implements Mapper {
+  async hasCollection(): Promise<boolean> {
+    return false;
+  }
+  async getCollection(): Promise<CollectionRecord> {
+    return new CollectionRecord("test-partition", "test-api-key", "*");
+  }
+}
 
 describe("Gateway", () => {
   let gateway: Gateway;
 
   beforeEach(() => {
-    const mapperConfig: MapperConfig = {
-      ragieApiKey: "ragie_api_key",
-      strictApiKeys: false,
-    };
     gateway = new Gateway(
       {
-        ...mapperConfig,
         baseUrl: "http://localhost:3000",
         port: 3002,
         logLevel: "error", // Reduce log noise during tests
@@ -24,9 +28,9 @@ describe("Gateway", () => {
         workosApiKey: "workos_api_key",
         workosAuthorizationServerUrl: "https://placeholder.authkit.app",
         workosClientId: "workos_client_id",
-        mappingFile: "mapping.json",
+        encryptionKey: "test-encryption-key-at-least-32-chars",
       },
-      new StrictMapper({})
+      new MockMapper()
     );
   });
 
