@@ -1,6 +1,6 @@
 /**
  * Encryption utilities using Web Crypto API for AES-256-GCM encryption.
- * Used for decrypting sensitive data like API keys stored in the database.
+ * Used for encrypting/decrypting sensitive data like API keys stored in the database.
  */
 
 import { webcrypto } from "crypto";
@@ -39,6 +39,38 @@ async function deriveKey(encryptionKey: string): Promise<webcrypto.CryptoKey> {
     false,
     ["encrypt", "decrypt"]
   );
+}
+
+/**
+ * Encrypts a plaintext string using AES-256-GCM.
+ * Returns the encrypted data as a base64 string with the IV prepended.
+ *
+ * @param plaintext - The string to encrypt
+ * @param encryptionKey - The encryption key (must be at least 32 characters)
+ * @returns Base64-encoded string containing IV + ciphertext
+ */
+export async function encrypt(plaintext: string, encryptionKey: string): Promise<string> {
+  if (!encryptionKey || encryptionKey.length < 32) {
+    throw new Error("Encryption key must be at least 32 characters long");
+  }
+
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+
+  // Generate a random IV for each encryption
+  const iv = webcrypto.getRandomValues(new Uint8Array(IV_LENGTH));
+
+  const key = await deriveKey(encryptionKey);
+
+  const ciphertext = await webcrypto.subtle.encrypt({ name: ALGORITHM, iv }, key, data);
+
+  // Combine IV and ciphertext into a single array
+  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(ciphertext), iv.length);
+
+  // Convert to base64 for storage
+  return btoa(String.fromCharCode(...combined));
 }
 
 /**
