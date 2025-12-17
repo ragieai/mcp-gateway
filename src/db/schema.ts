@@ -5,7 +5,6 @@ export const collections = pgTable("collections", {
   name: text("name").notNull(),
   organizationId: text("organization_id").notNull(),
   partition: text("partition").notNull(),
-  mcpServerUrl: text("mcp_server_url").notNull(),
   allowedRoles: jsonb("allowed_roles").notNull().$type<string[] | "*">(),
   filters: jsonb("filters").$type<Record<string, unknown>>(),
   ragieApiKey: text("ragie_api_key").notNull(), // Encrypted API key for Ragie

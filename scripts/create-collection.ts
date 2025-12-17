@@ -11,8 +11,7 @@
  *     --organization-id "org_123" \
  *     --partition "my-partition" \
  *     --ragie-api-key "ragie_xxx" \
- *     --allowed-roles "admin,member" \
- *     --mcp-server-url "https://api.ragie.ai"
+ *     --allowed-roles "admin,member"
  *
  * Use --allowed-roles "*" to allow all roles.
  */
@@ -28,7 +27,6 @@ interface CollectionInput {
   partition: string;
   ragieApiKey: string;
   allowedRoles: string[] | "*";
-  mcpServerUrl: string;
 }
 
 function parseArgs(): Partial<CollectionInput> & { help?: boolean } {
@@ -68,10 +66,6 @@ function parseArgs(): Partial<CollectionInput> & { help?: boolean } {
         }
         i++;
         break;
-      case "--mcp-server-url":
-        result.mcpServerUrl = nextArg;
-        i++;
-        break;
     }
   }
 
@@ -90,7 +84,6 @@ Options:
   --partition <partition>    Ragie partition name
   --ragie-api-key <key>      Ragie API key (will be encrypted)
   --allowed-roles <roles>    Comma-separated roles or "*" for all
-  --mcp-server-url <url>     MCP server URL (default: https://api.ragie.ai)
   -h, --help                 Show this help message
 
 Environment variables:
@@ -157,7 +150,6 @@ async function runInteractive(): Promise<CollectionInput> {
     const partition = await promptRequired(rl, "Partition");
     const ragieApiKey = await promptRequired(rl, "Ragie API key");
     const allowedRolesInput = await promptRequired(rl, 'Allowed roles (comma-separated or "*" for all)');
-    const mcpServerUrl = await prompt(rl, "MCP server URL", "https://api.ragie.ai");
 
     const allowedRoles = allowedRolesInput === "*" ? "*" : allowedRolesInput.split(",").map(r => r.trim());
 
@@ -167,7 +159,6 @@ async function runInteractive(): Promise<CollectionInput> {
       partition,
       ragieApiKey,
       allowedRoles,
-      mcpServerUrl,
     };
   } finally {
     rl.close();
@@ -199,15 +190,13 @@ async function createCollection(input: CollectionInput): Promise<void> {
         organization_id,
         partition,
         ragie_api_key,
-        allowed_roles,
-        mcp_server_url
+        allowed_roles
       ) VALUES (
         ${input.name},
         ${input.organizationId},
         ${input.partition},
         ${encryptedApiKey},
-        ${JSON.stringify(input.allowedRoles)},
-        ${input.mcpServerUrl}
+        ${JSON.stringify(input.allowedRoles)}
       )
       RETURNING id
     `;
@@ -218,7 +207,6 @@ async function createCollection(input: CollectionInput): Promise<void> {
     console.log(`  Organization: ${input.organizationId}`);
     console.log(`  Partition: ${input.partition}`);
     console.log(`  Allowed roles: ${input.allowedRoles === "*" ? "* (all)" : (input.allowedRoles as string[]).join(", ")}`);
-    console.log(`  MCP Server URL: ${input.mcpServerUrl}`);
     console.log(`\nEndpoint: POST /${input.organizationId}/mcp/${input.name}`);
   } finally {
     await sql.end();
@@ -247,7 +235,6 @@ async function main(): Promise<void> {
       partition: args.partition!,
       ragieApiKey: args.ragieApiKey!,
       allowedRoles: args.allowedRoles!,
-      mcpServerUrl: args.mcpServerUrl || "https://api.ragie.ai",
     };
   } else if (Object.keys(args).length > 0 && !args.help) {
     // Some args provided but not all - show error
