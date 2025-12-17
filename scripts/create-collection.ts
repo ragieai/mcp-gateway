@@ -27,6 +27,7 @@ interface CollectionInput {
   partition: string;
   ragieApiKey: string;
   allowedRoles: string[] | "*";
+  filters?: Record<string, unknown>;
 }
 
 function parseArgs(): Partial<CollectionInput> & { help?: boolean } {
@@ -66,6 +67,15 @@ function parseArgs(): Partial<CollectionInput> & { help?: boolean } {
         }
         i++;
         break;
+      case "--filters":
+        try {
+          result.filters = JSON.parse(nextArg);
+        } catch {
+          console.error("Error: --filters must be valid JSON");
+          process.exit(1);
+        }
+        i++;
+        break;
     }
   }
 
@@ -84,6 +94,7 @@ Options:
   --partition <partition>    Ragie partition name
   --ragie-api-key <key>      Ragie API key (will be encrypted)
   --allowed-roles <roles>    Comma-separated roles or "*" for all
+  --filters <json>           Optional filters as JSON object
   -h, --help                 Show this help message
 
 Environment variables:
@@ -150,8 +161,18 @@ async function runInteractive(): Promise<CollectionInput> {
     const partition = await promptRequired(rl, "Partition");
     const ragieApiKey = await promptRequired(rl, "Ragie API key");
     const allowedRolesInput = await promptRequired(rl, 'Allowed roles (comma-separated or "*" for all)');
+    const filtersInput = await prompt(rl, "Filters (JSON, optional)");
 
     const allowedRoles = allowedRolesInput === "*" ? "*" : allowedRolesInput.split(",").map(r => r.trim());
+
+    let filters: Record<string, unknown> | undefined;
+    if (filtersInput) {
+      try {
+        filters = JSON.parse(filtersInput);
+      } catch {
+        throw new Error("Filters must be valid JSON");
+      }
+    }
 
     return {
       name,
@@ -159,6 +180,7 @@ async function runInteractive(): Promise<CollectionInput> {
       partition,
       ragieApiKey,
       allowedRoles,
+      filters,
     };
   } finally {
     rl.close();
@@ -190,13 +212,15 @@ async function createCollection(input: CollectionInput): Promise<void> {
         organization_id,
         partition,
         ragie_api_key,
-        allowed_roles
+        allowed_roles,
+        filters
       ) VALUES (
         ${input.name},
         ${input.organizationId},
         ${input.partition},
         ${encryptedApiKey},
-        ${JSON.stringify(input.allowedRoles)}
+        ${JSON.stringify(input.allowedRoles)},
+        ${input.filters ? JSON.stringify(input.filters) : null}
       )
       RETURNING id
     `;
@@ -207,6 +231,9 @@ async function createCollection(input: CollectionInput): Promise<void> {
     console.log(`  Organization: ${input.organizationId}`);
     console.log(`  Partition: ${input.partition}`);
     console.log(`  Allowed roles: ${input.allowedRoles === "*" ? "* (all)" : (input.allowedRoles as string[]).join(", ")}`);
+    if (input.filters) {
+      console.log(`  Filters: ${JSON.stringify(input.filters)}`);
+    }
     console.log(`\nEndpoint: POST /${input.organizationId}/mcp/${input.name}`);
   } finally {
     await sql.end();
@@ -235,6 +262,7 @@ async function main(): Promise<void> {
       partition: args.partition!,
       ragieApiKey: args.ragieApiKey!,
       allowedRoles: args.allowedRoles!,
+      filters: args.filters,
     };
   } else if (Object.keys(args).length > 0 && !args.help) {
     // Some args provided but not all - show error
