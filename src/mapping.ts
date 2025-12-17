@@ -10,7 +10,8 @@ export class CollectionRecord {
   constructor(
     public partition: string,
     public ragieApiKey: string,
-    public allowedRoles: string[] | "*"
+    public allowedRoles: string[] | "*",
+    public filters?: Record<string, unknown>
   ) {}
 }
 
@@ -29,6 +30,7 @@ export class DatabaseMapper implements Mapper {
         partition: collections.partition,
         ragieApiKey: collections.ragieApiKey,
         allowedRoles: collections.allowedRoles,
+        filters: collections.filters,
       })
       .from(collections)
       .where(and(eq(collections.organizationId, organizationId), eq(collections.name, collection)))
@@ -40,7 +42,7 @@ export class DatabaseMapper implements Mapper {
     }
 
     const decryptedApiKey = await decrypt(record.ragieApiKey, this.encryptionKey);
-    return new CollectionRecord(record.partition, decryptedApiKey, record.allowedRoles);
+    return new CollectionRecord(record.partition, decryptedApiKey, record.allowedRoles, record.filters ?? undefined);
   }
 
   async hasCollection(organizationId: string, collection: string): Promise<boolean> {

@@ -9,7 +9,9 @@ This gateway acts as a secure proxy between AI clients (like Claude, OpenAI, or 
 - **Bearer Token Authentication**: JWT token verification via WorkOS JWKS
 - **Organization-Based Routing**: Multi-tenant routing with organization-scoped endpoints
 - **Organization Membership Validation**: Verifies user membership in organizations via WorkOS
+- **Role-Based Access Control**: Restricts collection access based on WorkOS organization roles
 - **Collection-Based Mapping**: Maps organization IDs and collections to Ragie partitions with per-organization/collection API keys
+- **Collection Filters**: Optional filters automatically applied to retrieve requests for scoping data access
 - **Proxy Functionality**: Transparent forwarding of authenticated requests to Ragie MCP services
 - **OAuth Discovery Endpoints**: Well-known endpoints for OAuth metadata discovery
 
@@ -111,7 +113,7 @@ The gateway requires several environment variables to be configured. You can set
 - `PORT`: Server port (defaults to 3000)
 - `LOG_LEVEL`: Logging level - debug, info, warn, or error (defaults to info)
 - `LOG_FORMAT`: Log format - json or pretty (defaults to pretty)
-- `NODE_ENV`: Environment mode (development, production, etc.)
+- `NODE_ENV`: Environment mode - in development mode, SIGINT shuts down immediately; in production mode, SIGINT triggers graceful shutdown
 - `RAGIE_BASE_URL`: Ragie API base URL (defaults to `https://api.ragie.ai/`)
 
 ### Example `.env` File
@@ -160,12 +162,43 @@ The gateway reads collection configurations from a PostgreSQL database. Each col
 - `partition`: The Ragie partition name to route to
 - `ragie_api_key`: The encrypted Ragie API key for this collection
 - `allowed_roles`: Array of role names (e.g., `["admin", "member"]`) or `"*"` to allow all roles
+- `filters`: Optional JSON object of filters to apply to all retrieve requests for this collection
 
 **Role-Based Access Control:** The gateway enforces role-based access control using WorkOS organization membership roles. Users must have at least one role that matches the `allowedRoles` configuration for the collection they're trying to access. Use `"*"` to allow access for any role.
 
 **API Key Encryption:** API keys are stored encrypted in the database using AES-256-GCM. The `ENCRYPTION_KEY` environment variable must match the key used to encrypt the API keys (typically by the manager application).
 
+**Collection Filters:** Each collection can have optional filters that are automatically applied to all `retrieve` tool calls. These filters are merged with any filters in the request, with collection filters taking precedence. This allows you to scope a collection to specific documents without requiring client-side filter configuration.
+
 The gateway only allows access to organization/collection combinations that exist in the database. Requests to non-existent collections will return a 404 error.
+
+### Creating Collections
+
+Use the `db:create-collection` script to create collections in the database:
+
+```bash
+# Interactive mode
+npm run db:create-collection
+
+# Non-interactive mode
+npm run db:create-collection -- \
+  --name "my-collection" \
+  --organization-id "org_123" \
+  --partition "my-partition" \
+  --ragie-api-key "tnt_xxx" \
+  --allowed-roles "admin,member"
+
+# With filters
+npm run db:create-collection -- \
+  --name "docs" \
+  --organization-id "org_123" \
+  --partition "production" \
+  --ragie-api-key "tnt_xxx" \
+  --allowed-roles "*" \
+  --filters '{"department": "engineering"}'
+```
+
+Run `npm run db:create-collection -- --help` for all options.
 
 ### Example: Running with Environment Variables
 
@@ -181,14 +214,15 @@ npx @ragieai/mcp-gateway
 
 ## API Endpoints
 
-### OAuth Discovery Endpoints
+### Public Endpoints
 
+- `GET /welcome` - Returns a welcome page (useful for verifying the gateway is running)
 - `GET /.well-known/oauth-protected-resource` - Returns OAuth protected resource metadata
 - `GET /.well-known/oauth-authorization-server` - Returns OAuth authorization server metadata (proxied from WorkOS)
 
 ### Protected Endpoints
 
-- `POST /:organizationId/mcp/:collection` - Proxies requests to Ragie MCP server (requires bearer token)
+- `POST /:organizationId/mcp/:collection` - Proxies MCP JSON-RPC requests to Ragie MCP server (requires bearer token)
 
 ### Path Rewriting
 
@@ -218,6 +252,7 @@ Each collection in the database has its own encrypted API key. This allows diffe
 - **Role-Based Access Control**: Users must have at least one role matching the collection's `allowedRoles` configuration
 - **Collection Validation**: Only organization/collection combinations that exist in the database are accessible
 - **Encrypted API Keys**: Ragie API keys are stored encrypted (AES-256-GCM) and decrypted only when needed
+- **Collection Filters**: Server-side filters ensure users can only access scoped data, regardless of client-provided filters
 - **Error Handling**: Proper HTTP status codes (401, 403, 404) and WWW-Authenticate headers for auth failures
 - **Collection Isolation**: Each organization/collection combination uses its own API key and partition
 
@@ -243,6 +278,8 @@ Each collection in the database has its own encrypted API key. This allows diffe
 - `npm test` - Run test suite
 - `npm run test:watch` - Run tests in watch mode
 - `npm run test:coverage` - Run tests with coverage report
+- `npm run db:init` - Initialize the database schema
+- `npm run db:create-collection` - Create a new collection (interactive or CLI)
 
 ## Integration with AI Clients
 
@@ -257,11 +294,23 @@ This gateway is designed to work with AI clients that support bearer token authe
 
 ### Example Request
 
+The gateway proxies MCP JSON-RPC requests. Here's an example using the `retrieve` tool:
+
 ```bash
 curl -X POST \
   -H "Authorization: Bearer <workos-jwt-token>" \
   -H "Content-Type: application/json" \
-  -d '{"query": "example query"}' \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "retrieve",
+      "arguments": {
+        "query": "example query"
+      }
+    },
+    "id": 1
+  }' \
   https://gateway.example.com/org_123/mcp/my-collection
 ```
 
@@ -273,6 +322,7 @@ The gateway supports multi-tenant access through organization and collection-bas
 - Users must be members of the organization to access its endpoints
 - Each collection maps to a specific Ragie partition
 - Each collection uses its own encrypted API key
+- Each collection can have optional filters to scope data access
 - Only collections that exist in the database are accessible
 
 ## Deployment

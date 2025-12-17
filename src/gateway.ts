@@ -11,9 +11,10 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import type winston from "winston";
+import { z } from "zod";
 import { Config } from "./config.js";
 import { createLogger } from "./logger.js";
-import type { Mapper } from "./mapping.js";
+import type { CollectionRecord, Mapper } from "./mapping.js";
 
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
@@ -25,10 +26,7 @@ interface ProxyParams {
 
 type ProxyRequest = Request<ProxyParams>;
 interface AuthenticatedProxyRequest extends ProxyRequest {
-  collection?: {
-    partition: string;
-    ragieApiKey: string;
-  };
+  collection?: CollectionRecord;
 }
 export class Gateway extends EventEmitter {
   private logger: winston.Logger;
@@ -99,6 +97,7 @@ export class Gateway extends EventEmitter {
 
     this.app.post(
       "/:organizationId/mcp/:collection",
+      express.json(),
       this.authMiddleware.bind(this),
       createProxyMiddleware<AuthenticatedProxyRequest, Response, NextFunction>({
         target: this.config.ragieBaseUrl,
@@ -109,9 +108,14 @@ export class Gateway extends EventEmitter {
           return `/mcp/${req.collection.partition}/`;
         },
         on: {
-          proxyReq: async (proxyReq, req) => {
+          proxyReq: (proxyReq, req) => {
             assert(req.collection, "Collection is required");
             proxyReq.setHeader("Authorization", `Bearer ${req.collection.ragieApiKey}`);
+
+            const bodyData = JSON.stringify(_applyFilter(req.body, req.collection.filters));
+            proxyReq.setHeader("Content-Type", "application/json");
+            proxyReq.setHeader("Content-Length", Buffer.byteLength(bodyData));
+            proxyReq.write(bodyData);
           },
         },
       })
@@ -248,6 +252,29 @@ export class Gateway extends EventEmitter {
   isActive(): boolean {
     return this.isRunning;
   }
+}
+
+const RetrieveToolCallSchema = z.looseObject({
+  method: z.literal("tools/call"),
+  params: z.looseObject({
+    name: z.literal("retrieve"),
+    arguments: z
+      .looseObject({
+        filter: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
+  }),
+});
+
+function _applyFilter(body: unknown, filters: Record<string, unknown> | undefined): unknown {
+  let result = body;
+  const parsed = RetrieveToolCallSchema.safeParse(body);
+  if (parsed.success && filters) {
+    const args = (parsed.data.params.arguments ??= {});
+    args.filter = { ...(args.filter ?? {}), ...filters };
+    result = parsed.data;
+  }
+  return result;
 }
 
 function _checkAccess(userId: string, memberships: OrganizationMembership[], allowedRoles: string[] | "*"): boolean {
