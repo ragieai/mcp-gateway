@@ -19,7 +19,6 @@ async function initDatabase() {
       name text NOT NULL,
       organization_id text NOT NULL,
       partition text NOT NULL,
-      mcp_server_url text NOT NULL,
       allowed_roles jsonb NOT NULL,
       ragie_api_key text NOT NULL,
       created_at timestamp DEFAULT now() NOT NULL,
