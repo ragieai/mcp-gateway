@@ -5,11 +5,11 @@
  */
 
 import dotenv from "dotenv";
+import { getConfigFromEnv } from "./config.js";
 import { Gateway } from "./gateway.js";
 import { createLogger } from "./logger.js";
-import { getConfigFromEnv } from "./config.js";
-import { loadMapper, Mapper } from "./mapping.js";
-import assert from "assert";
+import { DatabaseMapper } from "./mapping.js";
+import { getDatabase } from "./db/index.js";
 
 // Load environment variables
 dotenv.config();
@@ -19,14 +19,7 @@ const logger = createLogger("Main", config.logLevel, config.logFormat);
 const gracefulShutdown = process.env["NODE_ENV"] === "development" ? false : true;
 
 async function main(): Promise<void> {
-  let mapper: Mapper;
-  try {
-    mapper = loadMapper(config.mappingFile);
-  } catch (e) {
-    assert(e instanceof Error, "Expected error to be an instance of Error");
-    logger.error("Could not load mapper: " + e.message);
-    process.exit(1);
-  }
+  const mapper = new DatabaseMapper(getDatabase(), config.encryptionKey);
 
   const gateway = new Gateway(config, mapper);
   await gateway.start();

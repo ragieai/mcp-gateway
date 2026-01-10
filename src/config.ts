@@ -5,11 +5,11 @@ export interface Config {
   port: number;
   logLevel: "debug" | "info" | "warn" | "error";
   logFormat: "json" | "pretty";
-  mappingFile: string;
   ragieBaseUrl: string;
   workosApiKey: string;
   workosAuthorizationServerUrl: string;
   workosClientId: string;
+  encryptionKey: string;
 }
 
 export function getConfigFromEnv(): Config {
@@ -18,11 +18,11 @@ export function getConfigFromEnv(): Config {
     PORT: z.coerce.number().default(3000),
     LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
     LOG_FORMAT: z.enum(["json", "pretty"]).default("pretty"),
-    MAPPING_FILE: z.string(),
     RAGIE_BASE_URL: z.string().default("https://api.ragie.ai/"),
     WORKOS_API_KEY: z.string(),
     WORKOS_AUTHORIZATION_SERVER_URL: z.string(),
     WORKOS_CLIENT_ID: z.string(),
+    ENCRYPTION_KEY: z.string().min(32),
   });
 
   const env = envVarSchema.parse(process.env);
@@ -35,11 +35,11 @@ export function getConfigFromEnv(): Config {
     port: env.PORT,
     logLevel: env.LOG_LEVEL,
     logFormat: env.LOG_FORMAT,
-    mappingFile: env.MAPPING_FILE,
     ragieBaseUrl: env.RAGIE_BASE_URL,
     workosApiKey: env.WORKOS_API_KEY,
     workosAuthorizationServerUrl: env.WORKOS_AUTHORIZATION_SERVER_URL,
     workosClientId: env.WORKOS_CLIENT_ID,
+    encryptionKey: env.ENCRYPTION_KEY,
   };
 
   return config;

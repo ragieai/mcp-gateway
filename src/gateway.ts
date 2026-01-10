@@ -11,9 +11,10 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import type winston from "winston";
+import { z } from "zod";
 import { Config } from "./config.js";
 import { createLogger } from "./logger.js";
-import type { Mapper } from "./mapping.js";
+import type { CollectionRecord, Mapper } from "./mapping.js";
 
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
@@ -24,7 +25,9 @@ interface ProxyParams {
 }
 
 type ProxyRequest = Request<ProxyParams>;
-
+interface AuthenticatedProxyRequest extends ProxyRequest {
+  collection?: CollectionRecord;
+}
 export class Gateway extends EventEmitter {
   private logger: winston.Logger;
   private config: Config;
@@ -94,19 +97,25 @@ export class Gateway extends EventEmitter {
 
     this.app.post(
       "/:organizationId/mcp/:collection",
+      express.json(),
       this.authMiddleware.bind(this),
-      createProxyMiddleware<ProxyRequest>({
+      createProxyMiddleware<AuthenticatedProxyRequest, Response, NextFunction>({
         target: this.config.ragieBaseUrl,
         logger: this.logger,
         changeOrigin: true,
-        pathRewrite: (_path, req) => {
-          const partition = this.mapper.getPartition(req.params.organizationId, req.params.collection);
-          return `/mcp/${partition}/`;
+        pathRewrite: async (_path, req) => {
+          assert(req.collection, "Collection is required");
+          return `/mcp/${req.collection.partition}/`;
         },
         on: {
           proxyReq: (proxyReq, req) => {
-            const apiKey = this.mapper.getApiKey(req.params.organizationId, req.params.collection);
-            proxyReq.setHeader("Authorization", `Bearer ${apiKey}`);
+            assert(req.collection, "Collection is required");
+            proxyReq.setHeader("Authorization", `Bearer ${req.collection.ragieApiKey}`);
+
+            const bodyData = JSON.stringify(_applyFilter(req.body, req.collection.filters));
+            proxyReq.setHeader("Content-Type", "application/json");
+            proxyReq.setHeader("Content-Length", Buffer.byteLength(bodyData));
+            proxyReq.write(bodyData);
           },
         },
       })
@@ -133,9 +142,9 @@ export class Gateway extends EventEmitter {
   async authMiddleware(req: ProxyRequest, res: Response, next: NextFunction) {
     const { organizationId, collection } = req.params;
 
-    if (!this.mapper.hasMapping(organizationId, collection)) {
-      this.logger.warn(`No mapping found for organization ${organizationId} and collection ${collection}`);
-      res.status(404).json({ error: "Mapping not found" });
+    if (!(await this.mapper.hasCollection(organizationId, collection))) {
+      this.logger.warn(`No collection found for organization ${organizationId} and collection ${collection}`);
+      res.status(404).json({ error: "Collection not found" });
       return;
     }
 
@@ -165,12 +174,14 @@ export class Gateway extends EventEmitter {
       organizationId,
       statuses: ["active"],
     });
-
-    const hasAccess = _checkAccess(userId, response.data, this.mapper.getAllowedRoles(organizationId, collection));
+    const record = await this.mapper.getCollection(organizationId, collection);
+    const hasAccess = _checkAccess(userId, response.data, record.allowedRoles);
     if (!hasAccess) {
       res.set("WWW-Authenticate", this.wwwAuthenticateHeader).status(403).json({ error: "Access denied" });
       return;
     }
+
+    (req as AuthenticatedProxyRequest).collection = record;
 
     next();
   }
@@ -241,6 +252,29 @@ export class Gateway extends EventEmitter {
   isActive(): boolean {
     return this.isRunning;
   }
+}
+
+const RetrieveToolCallSchema = z.looseObject({
+  method: z.literal("tools/call"),
+  params: z.looseObject({
+    name: z.literal("retrieve"),
+    arguments: z
+      .looseObject({
+        filter: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
+  }),
+});
+
+function _applyFilter(body: unknown, filters: Record<string, unknown> | undefined): unknown {
+  let result = body;
+  const parsed = RetrieveToolCallSchema.safeParse(body);
+  if (parsed.success && filters) {
+    const args = (parsed.data.params.arguments ??= {});
+    args.filter = { ...(args.filter ?? {}), ...filters };
+    result = parsed.data;
+  }
+  return result;
 }
 
 function _checkAccess(userId: string, memberships: OrganizationMembership[], allowedRoles: string[] | "*"): boolean {
